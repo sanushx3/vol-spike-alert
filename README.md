@@ -8,12 +8,11 @@ Coming in Week 4.
 Beginner traders in the Indian Stock Market often take large positions without any awareness if a volatility spike will occur, resulting in a huge loss. This project builds a classifier that predicts whether the next trading day's price range on the Nifty 50 will be at least 1.5 times its 20-day average (a "volatility spike"), using past price data and scheduled-event features such as RBI policy dates and the Union Budget. Success means catching a high share of real spikes (recall) with a reasonable false-alarm rate, and beating a simple "tomorrow looks like today" baseline. It is a risk-awareness tool for beginners, not a trading strategy or financial advice.
 
 ## Dataset
-## Dataset
 
 - **Source:** Yahoo Finance, downloaded with the `yfinance` Python library (script: `src/download_data.py`)
 - **Instrument:** Nifty 50 index, ticker `^NSEI`, daily interval
 - **Date range:** 17 September 2007 to 30 October 2026
-- **Size:** 4,695 rows (one row per trading day)
+- **Size:** 4,691 rows (one row per trading day)
 - **Downloaded on:** 02/11/2026
 - **Raw file:** `data/nifty50_raw.csv`
 - **Columns:** Date, Open, High, Low, Close, Volume
