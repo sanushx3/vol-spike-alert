@@ -1,0 +1,12 @@
+{
+    "best_threshold": 0.4499999999999999,
+    "feature_cols": [
+        "feat_sma_return_5",
+        "feat_daily_range",
+        "feat_ema_ratio_5",
+        "feat_max_return_10",
+        "feat_min_return_10",
+        "feat_vol_ratio",
+        "vol_20"
+    ]
+}
