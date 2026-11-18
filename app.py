@@ -11,6 +11,7 @@ Optional (shown in the results tab):
     models/results_summary.csv
     images/threshold_tuning.png
 """
+import base64
 import json
 from pathlib import Path
 
@@ -20,12 +21,25 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    HAS_PLOTLY = True
+except ImportError:  # the app still runs with static charts
+    HAS_PLOTLY = False
+
 ROOT = Path(__file__).resolve().parent
 DATA_PATH = ROOT / "data" / "nifty50_features.csv"
 MODEL_PATH = ROOT / "models" / "lr_pipeline.joblib"
 CONFIG_PATH = ROOT / "models" / "config.json"
 RESULTS_PATH = ROOT / "models" / "results_summary.csv"
 FIGURE_PATH = ROOT / "images" / "threshold_tuning.png"
+BACKGROUND_PATH = ROOT / "images" / "background.jpg"
+PRICES_PATH = ROOT / "data" / "nifty50_prices.csv"   # optional clean prices
+RAW_PATH = ROOT / "data" / "nifty50_raw.csv"         # fallback: the yfinance download
+LOGO_PATH = ROOT / "images" / "logo.png"
+ICON_PATH = ROOT / "images" / "icon.png"
 
 # Same time split as the modeling notebook
 TRAIN_END_YEAR = 2019
@@ -45,7 +59,125 @@ FEATURE_LABELS = {
     "vol_20": "20-day volatility",
 }
 
-st.set_page_config(page_title="Nifty 50 spike warning", layout="wide")
+st.set_page_config(
+    page_title="VolSpike | Nifty 50 spike warning",
+    page_icon=str(ICON_PATH) if ICON_PATH.exists() else None,
+    layout="wide",
+)
+
+# ---------------------------------------------------------------- look
+# Minimal terminal-style palette: near-black page, thin lines, and green or red
+# only where they carry meaning (green lowers the risk score, red raises it).
+COLOR_UP = "#EF5350"      # raises the risk score, warning threshold
+COLOR_DOWN = "#26A69A"    # lowers the risk score
+COLOR_LINE = "#B2B5BE"    # risk score line
+COLOR_SPIKE = "#F5C451"   # day before a real spike
+PANEL = "#0B0E11"         # same as the page, so charts blend in
+GRID = "#1E222D"
+BORDER = "#2A2E39"
+MUTED = "#787B86"
+TEXT = "#D1D4DC"
+
+# Bull and bear artwork (images/background.jpg) on the right of the page, with the
+# content in a dark translucent column on the left. Set USE_ARTWORK = False for a
+# plain dark page.
+USE_ARTWORK = True
+OVERLAY = 0.50      # 0 shows the artwork at full strength, 1 hides it
+PANEL_LEFT = 0.92    # opacity of the content column at its left edge
+PANEL_RIGHT = 0.62   # opacity at its right edge (lower shows more artwork behind it)
+
+plt.rcParams.update(
+    {
+        "figure.facecolor": "none",
+        "axes.facecolor": "none",
+        "axes.edgecolor": BORDER,
+        "axes.grid": True,
+        "grid.color": GRID,
+        "grid.linewidth": 0.6,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "text.color": TEXT,
+        "axes.labelcolor": TEXT,
+        "xtick.color": MUTED,
+        "ytick.color": MUTED,
+        "legend.facecolor": PANEL,
+        "legend.edgecolor": BORDER,
+    }
+)
+
+if LOGO_PATH.exists():
+    st.logo(
+        str(LOGO_PATH),
+        icon_image=str(ICON_PATH) if ICON_PATH.exists() else None,
+        size="large",
+    )
+
+BASE_CSS = """
+<style>
+.block-container { padding-top: 2.2rem; max-width: 1200px; }
+h1 { font-weight: 600; letter-spacing: -0.02em; font-size: 1.9rem; }
+[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; font-weight: 600; }
+[data-testid="stMetricLabel"] p {
+    text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: #787B86;
+}
+.ticker {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 1.6rem;
+    padding: 0.55rem 0.9rem; margin: 0.4rem 0 1rem 0;
+    border: 1px solid #2A2E39; border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+}
+.ticker .sym { font-weight: 700; letter-spacing: 0.06em; }
+.ticker .lbl { color: #787B86; font-size: 0.72rem; letter-spacing: 0.08em; margin-right: 0.35rem; }
+.ticker .chip {
+    margin-left: auto; border: 1px solid; border-radius: 4px;
+    padding: 0.1rem 0.55rem; font-size: 0.75rem; letter-spacing: 0.08em; font-weight: 600;
+}
+</style>
+"""
+st.markdown(BASE_CSS, unsafe_allow_html=True)
+
+
+@st.cache_data
+def background_css(overlay: float, panel_left: float, panel_right: float) -> str:
+    if not BACKGROUND_PATH.exists():
+        return ""
+    encoded = base64.b64encode(BACKGROUND_PATH.read_bytes()).decode()
+    return f"""
+    <style>
+    .stApp {{
+        background-color: #05070A;
+        background-image: linear-gradient(rgba(5,7,10,{overlay}), rgba(5,7,10,{overlay})),
+                          url("data:image/jpeg;base64,{encoded}");
+        background-repeat: no-repeat;
+        background-size: auto 100%;
+        background-position: calc(100% + 25vw) center;
+        background-attachment: fixed;
+    }}
+    [data-testid="stAppViewContainer"], [data-testid="stMain"] {{ background: transparent; }}
+    [data-testid="stHeader"] {{ background: transparent; }}
+    [data-testid="stSidebar"] {{
+        background-color: rgba(8,11,16,0.90);
+        backdrop-filter: blur(4px);
+    }}
+    .block-container {{
+        max-width: 980px;
+        margin-left: 2rem;
+        margin-right: auto;
+        margin-top: 1rem;
+        padding: 2rem 2.2rem 3rem 2.2rem;
+        background: linear-gradient(90deg, rgba(8,11,16,{panel_left}), rgba(8,11,16,{panel_right}));
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        border-radius: 10px;
+    }}
+    </style>
+    """
+
+
+if USE_ARTWORK:
+    artwork_css = background_css(OVERLAY, PANEL_LEFT, PANEL_RIGHT)
+    if artwork_css:
+        st.markdown(artwork_css, unsafe_allow_html=True)
 
 missing = [p.name for p in (DATA_PATH, MODEL_PATH, CONFIG_PATH) if not p.exists()]
 if missing:
@@ -81,6 +213,150 @@ pipe, cfg = load_model()
 feature_cols = cfg["feature_cols"]
 threshold = float(cfg["best_threshold"])
 df = load_scored_data(pipe, feature_cols)
+
+
+@st.cache_data
+def load_prices():
+    """Daily Nifty 50 prices. Uses data/nifty50_prices.csv if present, otherwise
+    the raw yfinance file (which has two extra header rows)."""
+    try:
+        if PRICES_PATH.exists():
+            px = pd.read_csv(PRICES_PATH, parse_dates=["Dates"])
+        elif RAW_PATH.exists():
+            px = pd.read_csv(RAW_PATH, skiprows=[1, 2]).rename(columns={"Price": "Dates"})
+            px["Dates"] = pd.to_datetime(px["Dates"])
+            for col in ["Open", "High", "Low", "Close"]:
+                px[col] = pd.to_numeric(px[col])
+        else:
+            return None
+        return px[["Dates", "Close"]].sort_values("Dates").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def prepare_spike_table(scored, prices, thr):
+    """One row per spike. A row of `scored` with Target == 1 means a spike came on the
+    NEXT trading day, so the spike date is the following date."""
+    close = prices.set_index("Dates")["Close"]
+    move = close.pct_change() * 100
+    nxt = scored["Dates"].shift(-1)
+    spk = scored[scored["Target"] == 1].copy()
+    spk["spike_date"] = nxt.loc[spk.index].values
+    spk = spk.dropna(subset=["spike_date"])
+    spk["spike_close"] = close.reindex(spk["spike_date"]).values
+    spk["spike_move"] = move.reindex(spk["spike_date"]).values
+    spk = spk.dropna(subset=["spike_close", "spike_move"])
+    spk["warned"] = np.where(spk["risk_score"] > thr, "Yes", "No")
+    spk["spike_label"] = spk["spike_date"].dt.strftime("%d %b %Y")
+    return spk
+
+
+def build_market_figure(scored, prices, thr, picked_date, one_year, show_warnings):
+    close = prices.set_index("Dates")["Close"]
+    spk = prepare_spike_table(scored, prices, thr)
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.0, row_heights=[0.64, 0.36]
+    )
+
+    # top panel: Nifty 50 close, spike days, optional warning days
+    fig.add_trace(
+        go.Scatter(
+            x=prices["Dates"], y=prices["Close"], mode="lines",
+            line=dict(color=COLOR_LINE, width=1.3), name="Nifty 50 close",
+            hovertemplate="%{x|%d %b %Y}<br>Close %{y:,.0f}<extra></extra>",
+        ),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=spk["spike_date"], y=spk["spike_close"], mode="markers", name="Spike day",
+            marker=dict(color=COLOR_UP, size=9, symbol="diamond", line=dict(color=PANEL, width=1)),
+            customdata=list(zip(spk["spike_move"], spk["warned"], spk["risk_score"])),
+            hovertemplate=(
+                "<b>Spike on %{x|%d %b %Y}</b><br>Move %{customdata[0]:+.2f}%<br>"
+                "Model warned the day before: %{customdata[1]}<br>"
+                "Risk score the day before: %{customdata[2]:.2f}<extra></extra>"
+            ),
+        ),
+        row=1, col=1,
+    )
+    if show_warnings:
+        warn = scored[scored["risk_score"] > thr]
+        outcome = np.where(warn["Target"] == 1, "Spike", "No spike")
+        fig.add_trace(
+            go.Scatter(
+                x=warn["Dates"], y=close.reindex(warn["Dates"]).values, mode="markers",
+                name="Warning issued",
+                marker=dict(color=COLOR_SPIKE, size=4, opacity=0.85),
+                customdata=list(zip(warn["risk_score"], outcome)),
+                hovertemplate=(
+                    "<b>Warning issued %{x|%d %b %Y}</b><br>Risk score %{customdata[0]:.2f}"
+                    "<br>Next day: %{customdata[1]}<extra></extra>"
+                ),
+            ),
+            row=1, col=1,
+        )
+
+    # bottom panel: risk score, threshold, and the days before real spikes
+    fig.add_trace(
+        go.Scatter(
+            x=scored["Dates"], y=scored["risk_score"], mode="lines",
+            line=dict(color=COLOR_LINE, width=1), name="Risk score",
+            hovertemplate="%{x|%d %b %Y}<br>Risk score %{y:.2f}<extra></extra>",
+        ),
+        row=2, col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=spk["Dates"], y=spk["risk_score"], mode="markers", name="Day before a spike",
+            marker=dict(color=COLOR_UP, size=6, symbol="diamond"),
+            customdata=list(zip(spk["spike_label"])),
+            hovertemplate=(
+                "<b>%{x|%d %b %Y}</b><br>Risk score %{y:.2f}"
+                "<br>Spike followed on %{customdata[0]}<extra></extra>"
+            ),
+        ),
+        row=2, col=1,
+    )
+    fig.add_hline(y=thr, line_dash="dash", line_color=COLOR_UP, line_width=1, row=2, col=1)
+
+    # the day picked in the sidebar
+    d = picked_date.strftime("%Y-%m-%d")
+    fig.add_shape(
+        type="line", x0=d, x1=d, y0=0, y1=1, xref="x", yref="paper",
+        line=dict(color=TEXT, width=1, dash="dot"),
+    )
+
+    fig.update_layout(
+        height=560, margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, size=12), hovermode="closest", dragmode="pan",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor=BORDER)
+    fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor=BORDER)
+    fig.update_yaxes(title_text="Close", row=1, col=1)
+    fig.update_yaxes(title_text="Risk score", range=[0, 1], row=2, col=1)
+    fig.update_xaxes(
+        rangeselector=dict(
+            buttons=[
+                dict(count=1, label="1M", step="month", stepmode="backward"),
+                dict(count=6, label="6M", step="month", stepmode="backward"),
+                dict(count=1, label="1Y", step="year", stepmode="backward"),
+                dict(count=5, label="5Y", step="year", stepmode="backward"),
+                dict(step="all", label="All"),
+            ],
+            bgcolor=PANEL, activecolor=BORDER, font=dict(color=TEXT),
+            x=1, xanchor="right", y=1.04, yanchor="bottom",
+        ),
+        row=1, col=1,
+    )
+    if one_year:
+        start = (picked_date - pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+        end = (picked_date + pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+        fig.update_xaxes(range=[start, end])
+    return fig
 
 st.title("Nifty 50 volatility spike warning")
 st.caption(
@@ -118,6 +394,22 @@ if shown_date.date() != selected:
         f"No trading data on that date, so the latest earlier day is shown "
         f"({shown_date:%d %b %Y})."
     )
+
+strip_score = float(row["risk_score"])
+strip_warn = strip_score > threshold
+strip_color = COLOR_UP if strip_warn else COLOR_DOWN
+st.markdown(
+    f"""
+<div class="ticker">
+  <span class="sym">NIFTY 50</span>
+  <span><span class="lbl">DATE</span>{shown_date:%d %b %Y}</span>
+  <span><span class="lbl">RISK</span>{strip_score:.2f}</span>
+  <span><span class="lbl">THRESHOLD</span>{threshold:.2f}</span>
+  <span class="chip" style="color:{strip_color}; border-color:{strip_color}">{"WARNING ON" if strip_warn else "WARNING OFF"}</span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 tab_explorer, tab_try, tab_results, tab_about = st.tabs(
     ["Explore a day", "Try your own numbers", "How well it works", "About the model"]
@@ -190,36 +482,55 @@ with tab_explorer:
         z = scaler.transform(x_row)[0]
         contrib = pd.Series(z * clf.coef_[0], index=feature_cols).sort_values()
         fig, ax = plt.subplots(figsize=(5.5, 3.6))
-        colors = ["#c0392b" if v > 0 else "#2c6fbb" for v in contrib.values]
+        colors = [COLOR_UP if v > 0 else COLOR_DOWN for v in contrib.values]
         ax.barh([FEATURE_LABELS.get(c, c) for c in contrib.index], contrib.values, color=colors)
-        ax.axvline(0, color="black", lw=0.8)
+        ax.axvline(0, color=TEXT, lw=0.8)
+        ax.grid(axis="y", visible=False)
         ax.set_xlabel("Effect compared with an average day")
         st.pyplot(fig)
         plt.close(fig)
         st.caption("Red bars raise the risk score, blue bars lower it.")
 
-    st.markdown("**Risk score over time**")
-    if chart_range == "One year around the day":
-        start = shown_date - pd.Timedelta(days=365)
-        end = shown_date + pd.Timedelta(days=365)
-        win = df[(df["Dates"] >= start) & (df["Dates"] <= end)]
+    st.markdown("**Nifty 50 and risk score**")
+    show_warnings = st.checkbox("Also mark the days the model warned", value=False)
+    prices = load_prices()
+    if HAS_PLOTLY and prices is not None:
+        market_fig = build_market_figure(
+            df, prices, threshold, shown_date,
+            chart_range == "One year around the day", show_warnings,
+        )
+        st.plotly_chart(market_fig, config={"displaylogo": False, "scrollZoom": True})
+        st.caption(
+            "Hover or tap a red diamond to see a spike's date and size and whether the "
+            "model warned the day before. Drag to move, scroll or pinch to zoom, and use "
+            "the buttons for 1 month to all history."
+        )
     else:
-        win = df
+        if not HAS_PLOTLY:
+            st.info("For the interactive chart, run: pip install plotly")
+        else:
+            st.info("Price data not found. Add data/nifty50_raw.csv or data/nifty50_prices.csv.")
+        if chart_range == "One year around the day":
+            start = shown_date - pd.Timedelta(days=365)
+            end = shown_date + pd.Timedelta(days=365)
+            win = df[(df["Dates"] >= start) & (df["Dates"] <= end)]
+        else:
+            win = df
 
-    fig, ax = plt.subplots(figsize=(11, 3.8))
-    ax.plot(win["Dates"], win["risk_score"], lw=1, color="#2c6fbb", label="Risk score")
-    ax.axhline(threshold, color="#c0392b", ls="--", lw=1, label=f"Warning threshold ({threshold:.2f})")
-    spikes = win[win["Target"] == 1]
-    ax.scatter(
-        spikes["Dates"], spikes["risk_score"], s=14, color="#e69f00",
-        zorder=3, label="Day before a real spike",
-    )
-    ax.axvline(shown_date, color="black", lw=1, alpha=0.6)
-    ax.set_ylabel("Risk score")
-    ax.set_ylim(0, 1)
-    ax.legend(loc="upper left", fontsize=8)
-    st.pyplot(fig)
-    plt.close(fig)
+        fig, ax = plt.subplots(figsize=(11, 3.8))
+        ax.plot(win["Dates"], win["risk_score"], lw=1, color=COLOR_LINE, label="Risk score")
+        ax.axhline(threshold, color=COLOR_UP, ls="--", lw=1, label=f"Warning threshold ({threshold:.2f})")
+        spikes = win[win["Target"] == 1]
+        ax.scatter(
+            spikes["Dates"], spikes["risk_score"], s=14, color=COLOR_SPIKE,
+            zorder=3, label="Day before a real spike",
+        )
+        ax.axvline(shown_date, color=TEXT, lw=1, alpha=0.6)
+        ax.set_ylabel("Risk score")
+        ax.set_ylim(0, 1)
+        ax.legend(loc="upper left", fontsize=8)
+        st.pyplot(fig)
+        plt.close(fig)
 
 # ---------------------------------------------------------------- try it
 with tab_try:
@@ -274,9 +585,10 @@ with tab_try:
     z_try = pipe[0].transform(x_try)[0]
     contrib_try = pd.Series(z_try * pipe[-1].coef_[0], index=feature_cols).sort_values()
     fig, ax = plt.subplots(figsize=(6, 3.6))
-    bar_colors = ["#c0392b" if v > 0 else "#2c6fbb" for v in contrib_try.values]
+    bar_colors = [COLOR_UP if v > 0 else COLOR_DOWN for v in contrib_try.values]
     ax.barh([FEATURE_LABELS.get(c, c) for c in contrib_try.index], contrib_try.values, color=bar_colors)
-    ax.axvline(0, color="black", lw=0.8)
+    ax.axvline(0, color=TEXT, lw=0.8)
+    ax.grid(axis="y", visible=False)
     ax.set_xlabel("Effect compared with an average day")
     st.pyplot(fig)
     plt.close(fig)
